@@ -6,25 +6,26 @@ CODEX_APP="${CODEX_DESKTOP_APP:-/Applications/Codex.app}"
 CODEX_EXECUTABLE="${CODEX_DESKTOP_EXECUTABLE:-$CODEX_APP/Contents/MacOS/Codex}"
 CODEX_CLI_BINARY="${CODEX_DESKTOP_CLI_BINARY:-$CODEX_APP/Contents/Resources/codex}"
 NODE_BINARY="${CODEX_DESKTOP_NODE_BINARY:-$CODEX_APP/Contents/Resources/cua_node/bin/node}"
-WRAPPER_PATH="$PROJECT_DIR/bin/codex-desktop-appserver-wrapper"
 TEMPLATE_PATH="$PROJECT_DIR/templates/Codex WebSocket.applescript.in"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_PATH="$DIST_DIR/Codex WebSocket.app"
 GENERATED_SCRIPT="$DIST_DIR/Codex WebSocket.applescript"
-LAUNCHER_LOG="$PROJECT_DIR/state/codex-websocket-launcher.log"
 WS_PORT="${CODEX_DESKTOP_WRAPPER_PORT:-45123}"
 WS_URL="${CODEX_DESKTOP_WRAPPER_WS_URL:-ws://127.0.0.1:${WS_PORT}}"
+DESKTOP_COPY=0
 DESKTOP_SYMLINK=0
 
 usage() {
   cat <<EOF
-usage: scripts/install [--desktop-symlink]
+usage: scripts/install [--desktop-copy] [--desktop-symlink]
 
-Builds a repo-local launcher app:
+Builds a self-contained launcher app:
   $APP_PATH
 
 Options:
+  --desktop-copy      Also copy the built app to ~/Desktop/Codex WebSocket.app.
   --desktop-symlink   Also create ~/Desktop/Codex WebSocket.app as a symlink to the repo app.
+                      This is convenient for development but breaks if the clone is removed.
 
 Environment:
   CODEX_DESKTOP_APP           Default: /Applications/Codex.app
@@ -38,6 +39,10 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --desktop-copy)
+      DESKTOP_COPY=1
+      shift
+      ;;
     --desktop-symlink)
       DESKTOP_SYMLINK=1
       shift
@@ -53,6 +58,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$DESKTOP_COPY" -eq 1 && "$DESKTOP_SYMLINK" -eq 1 ]]; then
+  echo "--desktop-copy and --desktop-symlink are mutually exclusive" >&2
+  exit 2
+fi
 
 require_executable() {
   local path="$1"
@@ -71,26 +81,27 @@ require_executable /usr/bin/osacompile "osacompile"
 mkdir -p "$DIST_DIR" "$PROJECT_DIR/state"
 chmod +x "$PROJECT_DIR/bin/codex-desktop-appserver-wrapper" "$PROJECT_DIR/bin/codex-stdio-websocket-bridge.mjs"
 
-PROJECT_DIR="$PROJECT_DIR" \
 CODEX_EXECUTABLE="$CODEX_EXECUTABLE" \
 CODEX_CLI_BINARY="$CODEX_CLI_BINARY" \
 NODE_BINARY="$NODE_BINARY" \
-WRAPPER_PATH="$WRAPPER_PATH" \
-LAUNCHER_LOG="$LAUNCHER_LOG" \
 WS_URL="$WS_URL" \
 WS_PORT="$WS_PORT" \
 /usr/bin/perl -0pe '
-  s/__PROJECT_DIR__/$ENV{PROJECT_DIR}/g;
   s/__CODEX_EXECUTABLE__/$ENV{CODEX_EXECUTABLE}/g;
   s/__CODEX_CLI_BINARY__/$ENV{CODEX_CLI_BINARY}/g;
   s/__NODE_BINARY__/$ENV{NODE_BINARY}/g;
-  s/__WRAPPER_PATH__/$ENV{WRAPPER_PATH}/g;
-  s/__LAUNCHER_LOG__/$ENV{LAUNCHER_LOG}/g;
   s/__WS_URL__/$ENV{WS_URL}/g;
   s/__WS_PORT__/$ENV{WS_PORT}/g;
 ' "$TEMPLATE_PATH" > "$GENERATED_SCRIPT"
 
 /usr/bin/osacompile -o "$APP_PATH" "$GENERATED_SCRIPT"
+
+APP_RESOURCE_ROOT="$APP_PATH/Contents/Resources/codex-desktop-ws"
+rm -rf "$APP_RESOURCE_ROOT"
+mkdir -p "$APP_RESOURCE_ROOT/bin"
+cp "$PROJECT_DIR/bin/codex-desktop-appserver-wrapper" "$APP_RESOURCE_ROOT/bin/"
+cp "$PROJECT_DIR/bin/codex-stdio-websocket-bridge.mjs" "$APP_RESOURCE_ROOT/bin/"
+chmod +x "$APP_RESOURCE_ROOT/bin/codex-desktop-appserver-wrapper" "$APP_RESOURCE_ROOT/bin/codex-stdio-websocket-bridge.mjs"
 
 if [[ -f "$CODEX_APP/Contents/Resources/electron.icns" ]]; then
   cp "$CODEX_APP/Contents/Resources/electron.icns" "$APP_PATH/Contents/Resources/applet.icns"
@@ -101,6 +112,20 @@ if command -v codesign >/dev/null 2>&1; then
 fi
 
 xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
+
+if [[ "$DESKTOP_COPY" -eq 1 ]]; then
+  desktop_app="$HOME/Desktop/Codex WebSocket.app"
+  if [[ -L "$desktop_app" ]]; then
+    rm "$desktop_app"
+  elif [[ -e "$desktop_app" ]]; then
+    echo "refusing to replace existing non-symlink: $desktop_app" >&2
+    echo "remove it manually or run without --desktop-copy" >&2
+    exit 1
+  fi
+  cp -R "$APP_PATH" "$desktop_app"
+  xattr -dr com.apple.quarantine "$desktop_app" 2>/dev/null || true
+  echo "copied launcher to Desktop: $desktop_app"
+fi
 
 if [[ "$DESKTOP_SYMLINK" -eq 1 ]]; then
   desktop_link="$HOME/Desktop/Codex WebSocket.app"
@@ -117,3 +142,4 @@ fi
 
 echo "built launcher: $APP_PATH"
 echo "websocket URL: $WS_URL"
+echo "runtime state: ~/Library/Application Support/Codex Desktop WebSocket"

@@ -53,28 +53,49 @@ From the repo root:
 scripts/install
 ```
 
-This builds a repo-local launcher app:
+This builds a self-contained launcher app:
 
 ```text
 dist/Codex WebSocket.app
 ```
 
+The built `.app` embeds the wrapper and stdio/WebSocket bridge under its own
+`Contents/Resources`, so you can copy the app somewhere else and remove the
+clone. The copied app still requires Codex Desktop to be installed at
+`/Applications/Codex.app`.
+
 Double-click that app to start Codex Desktop with WebSocket app-server support.
 If Codex is already running, the launcher asks before relaunching because the
 wrapper must be present at Desktop startup.
 
-Optional Desktop shortcut:
+Copy the self-contained app to your Desktop:
+
+```bash
+scripts/install --desktop-copy
+```
+
+Development-only Desktop symlink:
 
 ```bash
 scripts/install --desktop-symlink
 ```
 
-This creates `~/Desktop/Codex WebSocket.app` as a symlink to the repo-local app.
-It refuses to replace an existing non-symlink app.
+The symlink is convenient while iterating on the repo, but it breaks if the
+clone is removed.
 
 ## Runtime State
 
-Runtime files stay in this repo by default:
+The built launcher app writes runtime files to:
+
+```text
+~/Library/Application Support/Codex Desktop WebSocket/
+  codex-websocket-launcher.log
+  desktop-wrapper-app-server.log
+  desktop-wrapper-app-server.pid
+  desktop-wrapper-start.lock
+```
+
+When running `scripts/launch` directly from the repo, runtime files stay in:
 
 ```text
 state/
@@ -124,13 +145,14 @@ Create a thread and start a turn:
 
 ## CLI Launch
 
-If you prefer launching from a terminal instead of the app bundle:
+If you prefer launching from a terminal instead of the app bundle while keeping
+the clone around:
 
 ```bash
 scripts/launch
 ```
 
-This uses the same repo-local wrapper and state directory.
+This uses the same repo-local wrapper and the repo-local `state/` directory.
 
 ## Configuration
 

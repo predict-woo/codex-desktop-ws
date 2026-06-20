@@ -1,13 +1,17 @@
 property codexExecutable : "__CODEX_EXECUTABLE__"
 property codexCliBinary : "__CODEX_CLI_BINARY__"
 property nodeBinary : "__NODE_BINARY__"
-property wrapperPath : "__WRAPPER_PATH__"
-property projectDir : "__PROJECT_DIR__"
-property launcherLog : "__LAUNCHER_LOG__"
 property wsUrl : "__WS_URL__"
 property wsPort : "__WS_PORT__"
 
 on run
+	set appBundlePath to POSIX path of (path to me)
+	set resourceRoot to appBundlePath & "Contents/Resources/codex-desktop-ws"
+	set wrapperPath to resourceRoot & "/bin/codex-desktop-appserver-wrapper"
+	set homePath to POSIX path of (path to home folder)
+	set stateDir to homePath & "Library/Application Support/Codex Desktop WebSocket"
+	set launcherLog to stateDir & "/codex-websocket-launcher.log"
+	
 	set codexIsRunning to false
 	try
 		set probeResult to do shell script "/usr/bin/pgrep -x Codex >/dev/null && /bin/echo yes || /bin/echo no"
@@ -27,16 +31,16 @@ on run
 	set quotedCodexCliBinary to quoted form of codexCliBinary
 	set quotedNodeBinary to quoted form of nodeBinary
 	set quotedWrapperPath to quoted form of wrapperPath
-	set quotedProjectDir to quoted form of projectDir
+	set quotedStateDir to quoted form of stateDir
 	set quotedLauncherLog to quoted form of launcherLog
 	set quotedWsUrl to quoted form of wsUrl
 	
-	set launchCommand to "/bin/mkdir -p " & quotedProjectDir & "/state; " & ¬
+	set launchCommand to "/bin/mkdir -p " & quotedStateDir & "; " & ¬
 		"/bin/echo '['$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)'] launching Codex with WebSocket wrapper' >> " & quotedLauncherLog & "; " & ¬
 		"CODEX_CLI_PATH=" & quotedWrapperPath & " " & ¬
 		"CODEX_DESKTOP_WRAPPER_NODE=" & quotedNodeBinary & " " & ¬
 		"CODEX_DESKTOP_WRAPPER_REAL_CODEX=" & quotedCodexCliBinary & " " & ¬
-		"CODEX_DESKTOP_WRAPPER_STATE_DIR=" & quotedProjectDir & "/state " & ¬
+		"CODEX_DESKTOP_WRAPPER_STATE_DIR=" & quotedStateDir & " " & ¬
 		"CODEX_DESKTOP_WRAPPER_PORT=" & wsPort & " " & ¬
 		"CODEX_DESKTOP_WRAPPER_WS_URL=" & quotedWsUrl & " " & ¬
 		"PATH=/Applications/Codex.app/Contents/Resources/cua_node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin " & ¬

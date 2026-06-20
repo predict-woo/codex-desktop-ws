@@ -2,7 +2,15 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-PID_FILE="${CODEX_DESKTOP_WRAPPER_PID_FILE:-$PROJECT_DIR/state/desktop-wrapper-app-server.pid}"
+APP_SUPPORT_DIR="$HOME/Library/Application Support/Codex Desktop WebSocket"
+
+if [[ -n "${CODEX_DESKTOP_WRAPPER_PID_FILE:-}" ]]; then
+  PID_FILE="$CODEX_DESKTOP_WRAPPER_PID_FILE"
+elif [[ -s "$APP_SUPPORT_DIR/desktop-wrapper-app-server.pid" ]]; then
+  PID_FILE="$APP_SUPPORT_DIR/desktop-wrapper-app-server.pid"
+else
+  PID_FILE="$PROJECT_DIR/state/desktop-wrapper-app-server.pid"
+fi
 
 if [[ ! -s "$PID_FILE" ]]; then
   echo "no pid file: $PID_FILE"
