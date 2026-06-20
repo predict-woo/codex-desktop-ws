@@ -74,6 +74,12 @@ Copy the self-contained app to your Desktop:
 scripts/install --desktop-copy
 ```
 
+Replace an existing Desktop copy:
+
+```bash
+scripts/install --desktop-copy --force
+```
+
 Development-only Desktop symlink:
 
 ```bash

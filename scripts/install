@@ -14,10 +14,11 @@ WS_PORT="${CODEX_DESKTOP_WRAPPER_PORT:-45123}"
 WS_URL="${CODEX_DESKTOP_WRAPPER_WS_URL:-ws://127.0.0.1:${WS_PORT}}"
 DESKTOP_COPY=0
 DESKTOP_SYMLINK=0
+FORCE=0
 
 usage() {
   cat <<EOF
-usage: scripts/install [--desktop-copy] [--desktop-symlink]
+usage: scripts/install [--desktop-copy] [--desktop-symlink] [--force]
 
 Builds a self-contained launcher app:
   $APP_PATH
@@ -26,6 +27,7 @@ Options:
   --desktop-copy      Also copy the built app to ~/Desktop/Codex WebSocket.app.
   --desktop-symlink   Also create ~/Desktop/Codex WebSocket.app as a symlink to the repo app.
                       This is convenient for development but breaks if the clone is removed.
+  --force             Replace an existing ~/Desktop/Codex WebSocket.app.
 
 Environment:
   CODEX_DESKTOP_APP           Default: /Applications/Codex.app
@@ -45,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --desktop-symlink)
       DESKTOP_SYMLINK=1
+      shift
+      ;;
+    --force)
+      FORCE=1
       shift
       ;;
     -h|--help)
@@ -104,7 +110,10 @@ cp "$PROJECT_DIR/bin/codex-stdio-websocket-bridge.mjs" "$APP_RESOURCE_ROOT/bin/"
 chmod +x "$APP_RESOURCE_ROOT/bin/codex-desktop-appserver-wrapper" "$APP_RESOURCE_ROOT/bin/codex-stdio-websocket-bridge.mjs"
 
 if [[ -f "$CODEX_APP/Contents/Resources/electron.icns" ]]; then
+  cp "$CODEX_APP/Contents/Resources/electron.icns" "$APP_PATH/Contents/Resources/electron.icns"
   cp "$CODEX_APP/Contents/Resources/electron.icns" "$APP_PATH/Contents/Resources/applet.icns"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile electron.icns" "$APP_PATH/Contents/Info.plist" >/dev/null
+  /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$APP_PATH/Contents/Info.plist" >/dev/null 2>&1 || true
 fi
 
 if command -v codesign >/dev/null 2>&1; then
@@ -117,9 +126,11 @@ if [[ "$DESKTOP_COPY" -eq 1 ]]; then
   desktop_app="$HOME/Desktop/Codex WebSocket.app"
   if [[ -L "$desktop_app" ]]; then
     rm "$desktop_app"
+  elif [[ -e "$desktop_app" && "$FORCE" -eq 1 ]]; then
+    rm -rf "$desktop_app"
   elif [[ -e "$desktop_app" ]]; then
     echo "refusing to replace existing non-symlink: $desktop_app" >&2
-    echo "remove it manually or run without --desktop-copy" >&2
+    echo "remove it manually, pass --force, or run without --desktop-copy" >&2
     exit 1
   fi
   cp -R "$APP_PATH" "$desktop_app"
@@ -131,9 +142,11 @@ if [[ "$DESKTOP_SYMLINK" -eq 1 ]]; then
   desktop_link="$HOME/Desktop/Codex WebSocket.app"
   if [[ -L "$desktop_link" ]]; then
     rm "$desktop_link"
+  elif [[ -e "$desktop_link" && "$FORCE" -eq 1 ]]; then
+    rm -rf "$desktop_link"
   elif [[ -e "$desktop_link" ]]; then
     echo "refusing to replace existing non-symlink: $desktop_link" >&2
-    echo "remove it manually or run without --desktop-symlink" >&2
+    echo "remove it manually, pass --force, or run without --desktop-symlink" >&2
     exit 1
   fi
   ln -s "$APP_PATH" "$desktop_link"
