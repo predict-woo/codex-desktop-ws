@@ -100,6 +100,7 @@ WS_PORT="$WS_PORT" \
   s/__WS_PORT__/$ENV{WS_PORT}/g;
 ' "$TEMPLATE_PATH" > "$GENERATED_SCRIPT"
 
+rm -rf "$APP_PATH"
 /usr/bin/osacompile -o "$APP_PATH" "$GENERATED_SCRIPT"
 
 APP_RESOURCE_ROOT="$APP_PATH/Contents/Resources/codex-desktop-ws"
