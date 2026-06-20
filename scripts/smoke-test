@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+CODEX_APP="${CODEX_DESKTOP_APP:-/Applications/Codex.app}"
+NODE_BINARY="${CODEX_DESKTOP_NODE_BINARY:-$CODEX_APP/Contents/Resources/cua_node/bin/node}"
+WS_PORT="${CODEX_DESKTOP_WRAPPER_PORT:-45123}"
+WS_URL="${CODEX_DESKTOP_WRAPPER_WS_URL:-ws://127.0.0.1:${WS_PORT}}"
+READ_PATH="${1:-$PROJECT_DIR/README.md}"
+
+if [[ ! -x "$NODE_BINARY" ]]; then
+  echo "missing executable Node binary: $NODE_BINARY" >&2
+  exit 1
+fi
+
+"$NODE_BINARY" - "$WS_URL" "$READ_PATH" <<'EOF'
+const url = process.argv[2];
+const readPath = process.argv[3];
+
+const readyz = new URL(url);
+readyz.protocol = readyz.protocol === "wss:" ? "https:" : "http:";
+readyz.pathname = "/readyz";
+readyz.search = "";
+readyz.hash = "";
+
+const healthz = new URL(readyz);
+healthz.pathname = "/healthz";
+
+for (const endpoint of [readyz, healthz]) {
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    console.error(`${endpoint.href} returned HTTP ${response.status}`);
+    process.exit(1);
+  }
+}
+
+const ws = new WebSocket(url);
+const state = {
+  opened: false,
+  initialized: false,
+  config: false,
+  fsRead: false,
+  commandExec: false,
+  notifications: 0,
+};
+const result = {};
+
+const send = (id, method, params) => {
+  ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+};
+
+const finish = (ok, extra = {}) => {
+  console.log(JSON.stringify({ ok, ...state, ...result, ...extra }, null, 2));
+  try {
+    ws.close();
+  } catch {}
+  process.exit(ok ? 0 : 1);
+};
+
+const timer = setTimeout(() => finish(false, { stage: "timeout" }), 15000);
+
+ws.addEventListener("open", () => {
+  state.opened = true;
+  send(1, "initialize", {
+    clientInfo: { name: "codex-desktop-ws-smoke-test", version: "0.0.0" },
+    capabilities: {},
+  });
+});
+
+ws.addEventListener("message", (event) => {
+  let msg;
+  try {
+    msg = JSON.parse(String(event.data));
+  } catch {
+    return;
+  }
+
+  if (msg.method) {
+    state.notifications++;
+    return;
+  }
+
+  if (msg.id === 1) {
+    if (msg.error) return finish(false, { stage: "initialize", error: msg.error });
+    state.initialized = true;
+    result.userAgent = msg.result?.userAgent;
+    result.codexHome = msg.result?.codexHome;
+    ws.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+    send(2, "config/read", {});
+    return;
+  }
+
+  if (msg.id === 2) {
+    if (msg.error) return finish(false, { stage: "config/read", error: msg.error });
+    state.config = true;
+    const cfg = msg.result?.config ?? {};
+    result.model = cfg.model;
+    result.serviceTier = cfg.service_tier;
+    result.sandboxMode = cfg.sandbox_mode;
+    result.approvalPolicy = cfg.approval_policy;
+    result.enabledPluginCount = Object.keys(cfg.plugins ?? {}).filter((key) => cfg.plugins[key]?.enabled).length;
+    result.mcpServers = Object.keys(cfg.mcp_servers ?? {}).sort();
+    send(3, "fs/readFile", { path: readPath });
+    return;
+  }
+
+  if (msg.id === 3) {
+    if (msg.error) return finish(false, { stage: "fs/readFile", error: msg.error });
+    state.fsRead = true;
+    const text = Buffer.from(msg.result?.dataBase64 ?? "", "base64").toString("utf8");
+    result.fsReadPath = readPath;
+    result.fsReadBytes = text.length;
+    result.fsReadStartsWith = text.slice(0, 40);
+    send(4, "command/exec", {
+      command: ["/bin/echo", "codex-desktop-ws-smoke-test"],
+      timeoutMs: 5000,
+      outputBytesCap: 4096,
+    });
+    return;
+  }
+
+  if (msg.id === 4) {
+    clearTimeout(timer);
+    if (msg.error) return finish(false, { stage: "command/exec", error: msg.error });
+    state.commandExec = true;
+    result.commandExitCode = msg.result?.exitCode;
+    result.commandStdout = msg.result?.stdout;
+    result.commandStderr = msg.result?.stderr;
+    finish(true, { stage: "complete" });
+  }
+});
+
+ws.addEventListener("close", (event) => {
+  clearTimeout(timer);
+  finish(false, { stage: "close", code: event.code, reason: event.reason });
+});
+
+ws.addEventListener("error", (event) => {
+  clearTimeout(timer);
+  finish(false, { stage: "error", message: event.message || "" });
+});
+EOF

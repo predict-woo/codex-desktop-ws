@@ -1,0 +1,47 @@
+property codexExecutable : "__CODEX_EXECUTABLE__"
+property codexCliBinary : "__CODEX_CLI_BINARY__"
+property nodeBinary : "__NODE_BINARY__"
+property wrapperPath : "__WRAPPER_PATH__"
+property projectDir : "__PROJECT_DIR__"
+property launcherLog : "__LAUNCHER_LOG__"
+property wsUrl : "__WS_URL__"
+property wsPort : "__WS_PORT__"
+
+on run
+	set codexIsRunning to false
+	try
+		set probeResult to do shell script "/usr/bin/pgrep -x Codex >/dev/null && /bin/echo yes || /bin/echo no"
+		if probeResult is "yes" then set codexIsRunning to true
+	end try
+	
+	if codexIsRunning then
+		display dialog "Codex is already running. Relaunch it with WebSocket app-server support?" buttons {"Cancel", "Relaunch"} default button "Relaunch" cancel button "Cancel" with icon caution
+		set stopResult to do shell script "/usr/bin/pkill -TERM -x Codex >/dev/null 2>&1 || true; i=0; while /usr/bin/pgrep -x Codex >/dev/null; do if [ \"$i\" -ge 50 ]; then /bin/echo still-running; exit 0; fi; i=$((i+1)); /bin/sleep 0.2; done; /bin/echo stopped"
+		if stopResult is "still-running" then
+			display dialog "Codex did not quit within 10 seconds. Quit it manually, then press this launcher again." buttons {"OK"} default button "OK" with icon caution
+			return
+		end if
+	end if
+	
+	set quotedCodexExecutable to quoted form of codexExecutable
+	set quotedCodexCliBinary to quoted form of codexCliBinary
+	set quotedNodeBinary to quoted form of nodeBinary
+	set quotedWrapperPath to quoted form of wrapperPath
+	set quotedProjectDir to quoted form of projectDir
+	set quotedLauncherLog to quoted form of launcherLog
+	set quotedWsUrl to quoted form of wsUrl
+	
+	set launchCommand to "/bin/mkdir -p " & quotedProjectDir & "/state; " & ¬
+		"/bin/echo '['$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)'] launching Codex with WebSocket wrapper' >> " & quotedLauncherLog & "; " & ¬
+		"CODEX_CLI_PATH=" & quotedWrapperPath & " " & ¬
+		"CODEX_DESKTOP_WRAPPER_NODE=" & quotedNodeBinary & " " & ¬
+		"CODEX_DESKTOP_WRAPPER_REAL_CODEX=" & quotedCodexCliBinary & " " & ¬
+		"CODEX_DESKTOP_WRAPPER_STATE_DIR=" & quotedProjectDir & "/state " & ¬
+		"CODEX_DESKTOP_WRAPPER_PORT=" & wsPort & " " & ¬
+		"CODEX_DESKTOP_WRAPPER_WS_URL=" & quotedWsUrl & " " & ¬
+		"PATH=/Applications/Codex.app/Contents/Resources/cua_node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin " & ¬
+		"/usr/bin/nohup " & quotedCodexExecutable & " >> " & quotedLauncherLog & " 2>&1 &"
+	
+	do shell script launchCommand
+	display notification "Launching with app-server WebSocket on 127.0.0.1:" & wsPort with title "Codex WebSocket"
+end run

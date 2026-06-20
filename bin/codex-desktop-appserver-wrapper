@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+WRAPPER_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "$WRAPPER_DIR/.." && pwd)"
+
+REAL_CODEX="${CODEX_DESKTOP_WRAPPER_REAL_CODEX:-/Applications/Codex.app/Contents/Resources/codex}"
+BRIDGE="${CODEX_DESKTOP_WRAPPER_BRIDGE:-$WRAPPER_DIR/codex-stdio-websocket-bridge.mjs}"
+NODE_BIN="${CODEX_DESKTOP_WRAPPER_NODE:-/Applications/Codex.app/Contents/Resources/cua_node/bin/node}"
+HOST="${CODEX_DESKTOP_WRAPPER_HOST:-127.0.0.1}"
+PORT="${CODEX_DESKTOP_WRAPPER_PORT:-45123}"
+WS_URL="${CODEX_DESKTOP_WRAPPER_WS_URL:-ws://${HOST}:${PORT}}"
+STATE_DIR="${CODEX_DESKTOP_WRAPPER_STATE_DIR:-$PROJECT_DIR/state}"
+LOG_FILE="${CODEX_DESKTOP_WRAPPER_LOG:-$STATE_DIR/desktop-wrapper-app-server.log}"
+PID_FILE="${CODEX_DESKTOP_WRAPPER_PID_FILE:-$STATE_DIR/desktop-wrapper-app-server.pid}"
+LOCK_DIR="${CODEX_DESKTOP_WRAPPER_LOCK_DIR:-$STATE_DIR/desktop-wrapper-start.lock}"
+
+if [[ ! -x "$REAL_CODEX" ]]; then
+  echo "codex wrapper: real Codex binary is not executable: $REAL_CODEX" >&2
+  exit 127
+fi
+
+if [[ ! -x "$NODE_BIN" ]]; then
+  echo "codex wrapper: Node binary is not executable: $NODE_BIN" >&2
+  exit 127
+fi
+
+if [[ ! -f "$BRIDGE" ]]; then
+  echo "codex wrapper: bridge script does not exist: $BRIDGE" >&2
+  exit 127
+fi
+
+should_intercept_app_server() {
+  [[ "${1:-}" == "app-server" ]] || return 1
+  shift || true
+
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help|daemon|proxy|generate-ts|generate-json-schema|help)
+        return 1
+        ;;
+      --stdio|--listen|--listen=*)
+        return 1
+        ;;
+    esac
+  done
+
+  return 0
+}
+
+websocket_ready() {
+  "$NODE_BIN" - "$WS_URL" <<'EOF' >/dev/null 2>&1
+const url = process.argv[2];
+const readyz = new URL(url);
+readyz.protocol = readyz.protocol === "wss:" ? "https:" : "http:";
+readyz.pathname = "/readyz";
+readyz.search = "";
+readyz.hash = "";
+
+const response = await fetch(readyz);
+if (!response.ok) {
+  process.exit(1);
+}
+
+const ws = new WebSocket(url);
+const timer = setTimeout(() => process.exit(1), 1000);
+
+ws.addEventListener("open", () => {
+  clearTimeout(timer);
+  ws.close(1000, "probe");
+  process.exit(0);
+});
+ws.addEventListener("error", () => {
+  clearTimeout(timer);
+  process.exit(1);
+});
+ws.addEventListener("close", () => {
+  clearTimeout(timer);
+  process.exit(1);
+});
+EOF
+}
+
+start_server() {
+  mkdir -p "$STATE_DIR"
+
+  if websocket_ready; then
+    return 0
+  fi
+
+  local waited=0
+  until mkdir "$LOCK_DIR" 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if (( waited > 300 )); then
+      echo "codex wrapper: timed out waiting for app-server startup lock $LOCK_DIR" >&2
+      exit 1
+    fi
+    if websocket_ready; then
+      return 0
+    fi
+  done
+
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' RETURN
+
+  if websocket_ready; then
+    return 0
+  fi
+
+  # Clean up an app-server process previously started by this wrapper if it is
+  # no longer accepting websocket connections. Avoid killing unrelated Codex
+  # app-server processes.
+  if [[ -s "$PID_FILE" ]]; then
+    local old_pid
+    old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+      kill "$old_pid" 2>/dev/null || true
+    fi
+  fi
+
+  {
+    printf '\n[%s] starting Codex app-server on %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$WS_URL"
+    printf '[%s] command: %q app-server --listen %q' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$REAL_CODEX" "$WS_URL"
+    printf ' %q' "${@:2}"
+    printf '\n'
+  } >>"$LOG_FILE"
+
+  nohup "$REAL_CODEX" app-server --listen "$WS_URL" "${@:2}" >>"$LOG_FILE" 2>&1 </dev/null &
+  echo "$!" >"$PID_FILE"
+
+  local attempts=0
+  until websocket_ready; do
+    attempts=$((attempts + 1))
+    if (( attempts > 300 )); then
+      echo "codex wrapper: app-server did not become ready at $WS_URL; see $LOG_FILE" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+
+if should_intercept_app_server "$@"; then
+  start_server "$@"
+  exec "$NODE_BIN" "$BRIDGE" "$WS_URL"
+fi
+
+exec "$REAL_CODEX" "$@"

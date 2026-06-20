@@ -1,0 +1,4 @@
+state/
+dist/*.app/
+dist/*.applescript
+.DS_Store

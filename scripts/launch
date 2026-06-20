@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+CODEX_APP="${CODEX_DESKTOP_APP:-/Applications/Codex.app}"
+CODEX_EXECUTABLE="${CODEX_DESKTOP_EXECUTABLE:-$CODEX_APP/Contents/MacOS/Codex}"
+CODEX_CLI_BINARY="${CODEX_DESKTOP_CLI_BINARY:-$CODEX_APP/Contents/Resources/codex}"
+NODE_BINARY="${CODEX_DESKTOP_NODE_BINARY:-$CODEX_APP/Contents/Resources/cua_node/bin/node}"
+WS_PORT="${CODEX_DESKTOP_WRAPPER_PORT:-45123}"
+WS_URL="${CODEX_DESKTOP_WRAPPER_WS_URL:-ws://127.0.0.1:${WS_PORT}}"
+LAUNCHER_LOG="$PROJECT_DIR/state/codex-websocket-launcher.log"
+
+mkdir -p "$PROJECT_DIR/state"
+
+if pgrep -x Codex >/dev/null 2>&1; then
+  echo "Codex is already running. Quit it first, or use the generated app launcher to relaunch interactively." >&2
+  exit 1
+fi
+
+{
+  printf '[%s] launching Codex with WebSocket wrapper\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+} >>"$LAUNCHER_LOG"
+
+CODEX_CLI_PATH="$PROJECT_DIR/bin/codex-desktop-appserver-wrapper" \
+CODEX_DESKTOP_WRAPPER_NODE="$NODE_BINARY" \
+CODEX_DESKTOP_WRAPPER_REAL_CODEX="$CODEX_CLI_BINARY" \
+CODEX_DESKTOP_WRAPPER_STATE_DIR="$PROJECT_DIR/state" \
+CODEX_DESKTOP_WRAPPER_PORT="$WS_PORT" \
+CODEX_DESKTOP_WRAPPER_WS_URL="$WS_URL" \
+PATH="$CODEX_APP/Contents/Resources/cua_node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+nohup "$CODEX_EXECUTABLE" >>"$LAUNCHER_LOG" 2>&1 &
+
+echo "launched Codex"
+echo "websocket URL: $WS_URL"
+echo "log: $LAUNCHER_LOG"
